@@ -98,13 +98,9 @@ This application is built entirely on a secure, serverless **AWS Architecture** 
 
 ## 📸 Demo & Screenshots
 
-### Video Demo
-- **Full System Walkthrough:** [View Demo Video](Hackathon%20intro%20-%205%20min%20demo%20for%20submission.mp4)
 
 ### Screenshots & Demos
 
-**Web Frontend Interface:**
-![UI Demo](UI%20demo.png)
 
 **System Architecture Diagram:**
 ![Architecture Diagram](Architecture2.gif)
