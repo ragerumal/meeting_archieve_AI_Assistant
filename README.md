@@ -611,6 +611,16 @@ def error_response(status_code: int, message: str):
 * **Speaker Isolation:** Refining text chunking Strategies inside Bedrock Knowledge Bases to prevent overlapping conversation contexts between Speaker 1 and Speaker 2.
 
 ---
+
+## 👥 Project Contributors
+
+We would like to thank our talented contributors who made this project possible:
+
+- **Nitesh Kashyap** - [LinkedIn](https://www.linkedin.com/in/nitesh-kashyap-13741814)
+- **Kislaya Srivastava** - [LinkedIn](https://www.linkedin.com/in/kislaya-srivastava)
+- **Raghunath Erumal** - [LinkedIn](https://www.linkedin.com/in/raghunath-erumal)
+
+---
 Developed during the **Hackathon 2026** 🚀
 
 
