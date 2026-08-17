@@ -113,6 +113,590 @@ This application is built entirely on a secure, serverless **AWS Architecture** 
 
 ## 🔧 Code Reference & Lambda Snippets
 
+### Frontend Implementation
+
+The frontend is a React-based single-page application that provides user authentication via Cognito and communicates with the backend Lambda through API Gateway.
+
+#### Frontend Setup & Dependencies
+
+```bash
+# Create React app with TypeScript
+npx create-react-app zoom-rag-frontend --template typescript
+cd zoom-rag-frontend
+
+# Install dependencies
+npm install axios aws-amplify aws-amplify-react-auth zustand react-markdown
+```
+
+#### Cognito Authentication Configuration
+
+```typescript
+// src/config/awsConfig.ts
+import { Amplify } from 'aws-amplify';
+
+const awsConfig = {
+  Auth: {
+    region: 'us-east-1',
+    userPoolId: process.env.REACT_APP_COGNITO_USER_POOL_ID,
+    userPoolWebClientId: process.env.REACT_APP_COGNITO_CLIENT_ID,
+    identityPoolId: process.env.REACT_APP_COGNITO_IDENTITY_POOL_ID,
+    redirectSignIn: process.env.REACT_APP_COGNITO_REDIRECT_URI,
+    redirectSignOut: process.env.REACT_APP_COGNITO_REDIRECT_URI
+  },
+  API: {
+    endpoints: [
+      {
+        name: 'ZoomRAGAPI',
+        endpoint: process.env.REACT_APP_API_GATEWAY_ENDPOINT,
+        region: 'us-east-1'
+      }
+    ]
+  }
+};
+
+Amplify.configure(awsConfig);
+export default awsConfig;
+```
+
+#### API Service Layer
+
+```typescript
+// src/services/apiService.ts
+import axios, { AxiosInstance } from 'axios';
+import { Auth } from 'aws-amplify';
+
+class APIService {
+  private apiClient: AxiosInstance;
+  private baseURL: string;
+
+  constructor() {
+    this.baseURL = process.env.REACT_APP_API_GATEWAY_ENDPOINT || '';
+    this.apiClient = axios.create({
+      baseURL: this.baseURL,
+      timeout: 30000
+    });
+
+    // Add interceptor to include auth token
+    this.apiClient.interceptors.request.use(async (config) => {
+      try {
+        const session = await Auth.currentSession();
+        const token = session.getIdToken().getJwtToken();
+        config.headers.Authorization = `Bearer ${token}`;
+      } catch (error) {
+        console.error('Error getting auth token:', error);
+      }
+      return config;
+    });
+  }
+
+  /**
+   * Query the RAG system with a user question
+   * Calls the Backend Lambda through API Gateway
+   */
+  async queryRAG(userQuery: string, conversationId?: string): Promise<RAGResponse> {
+    try {
+      const response = await this.apiClient.post('/query', {
+        user_query: userQuery,
+        conversation_id: conversationId || generateConversationId()
+      });
+
+      return {
+        success: true,
+        query: userQuery,
+        answer: response.data.answer,
+        sources: response.data.sources || [],
+        confidence: response.data.confidence || 0,
+        timestamp: new Date().toISOString()
+      };
+    } catch (error: any) {
+      console.error('Error querying RAG:', error);
+      return {
+        success: false,
+        query: userQuery,
+        answer: `Error: ${error.response?.data?.error || error.message}`,
+        sources: [],
+        confidence: 0,
+        timestamp: new Date().toISOString()
+      };
+    }
+  }
+
+  /**
+   * Fetch meeting transcripts metadata
+   */
+  async getMeetings(): Promise<Meeting[]> {
+    try {
+      const response = await this.apiClient.get('/meetings');
+      return response.data.meetings || [];
+    } catch (error) {
+      console.error('Error fetching meetings:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get specific meeting details and transcript
+   */
+  async getMeetingDetails(meetingId: string): Promise<Meeting | null> {
+    try {
+      const response = await this.apiClient.get(`/meetings/${meetingId}`);
+      return response.data;
+    } catch (error) {
+      console.error(`Error fetching meeting ${meetingId}:`, error);
+      return null;
+    }
+  }
+}
+
+interface RAGResponse {
+  success: boolean;
+  query: string;
+  answer: string;
+  sources: Array<{ document: string; location: string }>;
+  confidence: number;
+  timestamp: string;
+}
+
+interface Meeting {
+  meeting_id: string;
+  title: string;
+  date: string;
+  duration: number;
+  participants: string[];
+  transcript_url: string;
+}
+
+function generateConversationId(): string {
+  return `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+export default new APIService();
+```
+
+#### React Component: Query Interface
+
+```typescript
+// src/components/RAGQueryInterface.tsx
+import React, { useState, useRef, useEffect } from 'react';
+import apiService, { RAGResponse } from '../services/apiService';
+import './RAGQueryInterface.css';
+
+interface Message {
+  id: string;
+  type: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+  sources?: Array<{ document: string; location: string }>;
+}
+
+const RAGQueryInterface: React.FC = () => {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputQuery, setInputQuery] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [conversationId, setConversationId] = useState('');
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // Generate conversation ID on mount
+    setConversationId(`conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
+  }, []);
+
+  useEffect(() => {
+    // Auto-scroll to bottom
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const handleSubmitQuery = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!inputQuery.trim()) return;
+
+    // Add user message to chat
+    const userMessage: Message = {
+      id: `msg_${Date.now()}`,
+      type: 'user',
+      content: inputQuery,
+      timestamp: new Date().toISOString()
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+    setInputQuery('');
+    setLoading(true);
+
+    try {
+      // Call backend Lambda through API Gateway
+      const response = await apiService.queryRAG(inputQuery, conversationId);
+
+      // Add assistant response
+      const assistantMessage: Message = {
+        id: `msg_${Date.now()}_response`,
+        type: 'assistant',
+        content: response.answer,
+        timestamp: response.timestamp,
+        sources: response.sources
+      };
+
+      setMessages((prev) => [...prev, assistantMessage]);
+    } catch (error) {
+      console.error('Error in query:', error);
+      const errorMessage: Message = {
+        id: `msg_${Date.now()}_error`,
+        type: 'assistant',
+        content: 'Sorry, there was an error processing your query. Please try again.',
+        timestamp: new Date().toISOString()
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="rag-query-container">
+      <div className="chat-header">
+        <h2>🤖 Zoom Meeting RAG Assistant</h2>
+        <p>Ask questions about your Zoom meeting transcripts</p>
+      </div>
+
+      <div className="messages-container">
+        {messages.length === 0 && (
+          <div className="welcome-message">
+            <h3>Welcome to Zoom RAG Insight Engine</h3>
+            <p>Ask me anything about your meeting transcripts!</p>
+            <ul className="example-queries">
+              <li>What were the key action items discussed?</li>
+              <li>Who was responsible for the budget review?</li>
+              <li>What decisions were made about the project timeline?</li>
+              <li>Summarize the main discussion points</li>
+            </ul>
+          </div>
+        )}
+
+        {messages.map((message) => (
+          <div key={message.id} className={`message message-${message.type}`}>
+            <div className="message-content">
+              <p>{message.content}</p>
+              {message.sources && message.sources.length > 0 && (
+                <div className="sources">
+                  <h4>📚 Sources:</h4>
+                  <ul>
+                    {message.sources.map((source, idx) => (
+                      <li key={idx}>
+                        <strong>{source.document}</strong>
+                        <br />
+                        <small>{source.location}</small>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+            <span className="timestamp">
+              {new Date(message.timestamp).toLocaleTimeString()}
+            </span>
+          </div>
+        ))}
+
+        {loading && (
+          <div className="message message-assistant loading">
+            <div className="typing-indicator">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+          </div>
+        )}
+
+        <div ref={messagesEndRef} />
+      </div>
+
+      <form onSubmit={handleSubmitQuery} className="query-form">
+        <input
+          type="text"
+          value={inputQuery}
+          onChange={(e) => setInputQuery(e.target.value)}
+          placeholder="Ask a question about your meetings..."
+          disabled={loading}
+          className="query-input"
+        />
+        <button type="submit" disabled={loading} className="submit-button">
+          {loading ? '⏳ Processing...' : '📤 Send'}
+        </button>
+      </form>
+    </div>
+  );
+};
+
+export default RAGQueryInterface;
+```
+
+#### CSS Styling
+
+```css
+/* src/components/RAGQueryInterface.css */
+.rag-query-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  max-width: 1200px;
+  margin: 0 auto;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.chat-header {
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.2);
+  color: white;
+  text-align: center;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.chat-header h2 {
+  margin: 0 0 5px 0;
+  font-size: 28px;
+}
+
+.chat-header p {
+  margin: 0;
+  font-size: 14px;
+  opacity: 0.9;
+}
+
+.messages-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.welcome-message {
+  text-align: center;
+  color: white;
+  padding: 40px 20px;
+}
+
+.welcome-message h3 {
+  font-size: 24px;
+  margin-bottom: 10px;
+}
+
+.welcome-message p {
+  font-size: 16px;
+  margin-bottom: 20px;
+  opacity: 0.9;
+}
+
+.example-queries {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.example-queries li {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.example-queries li:hover {
+  background: rgba(255, 255, 255, 0.2);
+  transform: translateX(5px);
+}
+
+.message {
+  display: flex;
+  flex-direction: column;
+  max-width: 80%;
+  padding: 12px 16px;
+  border-radius: 12px;
+  word-wrap: break-word;
+  animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.message-user {
+  align-self: flex-end;
+  background: #667eea;
+  color: white;
+  border-radius: 12px 0 12px 12px;
+}
+
+.message-assistant {
+  align-self: flex-start;
+  background: white;
+  color: #333;
+  border-radius: 0 12px 12px 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.message-content p {
+  margin: 0 0 10px 0;
+  line-height: 1.5;
+}
+
+.sources {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e0e0e0;
+  font-size: 13px;
+}
+
+.sources h4 {
+  margin: 0 0 8px 0;
+  color: #667eea;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.sources ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.sources li {
+  margin-bottom: 8px;
+  padding: 8px;
+  background: #f5f5f5;
+  border-left: 3px solid #667eea;
+  border-radius: 4px;
+}
+
+.timestamp {
+  font-size: 12px;
+  opacity: 0.6;
+  margin-top: 4px;
+}
+
+.query-form {
+  display: flex;
+  gap: 10px;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.1);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.query-input {
+  flex: 1;
+  padding: 12px 16px;
+  border: none;
+  border-radius: 24px;
+  font-size: 14px;
+  outline: none;
+  background: white;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.query-input:focus {
+  box-shadow: 0 2px 12px rgba(102, 126, 234, 0.4);
+}
+
+.query-input:disabled {
+  background: #f0f0f0;
+  color: #999;
+}
+
+.submit-button {
+  padding: 12px 24px;
+  background: white;
+  color: #667eea;
+  border: none;
+  border-radius: 24px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.submit-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.submit-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.loading {
+  align-items: center;
+}
+
+.typing-indicator {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.typing-indicator span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #667eea;
+  animation: bounce 1.4s infinite;
+}
+
+.typing-indicator span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-indicator span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes bounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.6;
+  }
+  30% {
+    transform: translateY(-10px);
+    opacity: 1;
+  }
+}
+```
+
+#### Environment Variables (.env)
+
+```env
+# .env
+REACT_APP_API_GATEWAY_ENDPOINT=https://your-api-id.execute-api.us-east-1.amazonaws.com/prod
+REACT_APP_COGNITO_USER_POOL_ID=us-east-1_xxxxxxxxx
+REACT_APP_COGNITO_CLIENT_ID=your_client_id_here
+REACT_APP_COGNITO_IDENTITY_POOL_ID=us-east-1:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+REACT_APP_COGNITO_REDIRECT_URI=http://localhost:3000
+```
+
+**Frontend Features:**
+- ✅ Cognito authentication integration
+- ✅ Real-time chat interface with backend Lambda
+- ✅ Message history and conversation tracking
+- ✅ Source citations from RAG responses
+- ✅ Loading states and error handling
+- ✅ Responsive UI with smooth animations
+- ✅ Auto-scroll and timestamp tracking
+
+---
+
 ### Data Ingestion Lambda
 
 The following Lambda function handles Zoom meeting transcripts in **VTT (Video Text Track) format** retrieval and S3 storage. VTT format is the standard format returned by Zoom API for recorded meetings and includes timestamped speaker information:
