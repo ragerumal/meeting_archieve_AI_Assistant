@@ -1,0 +1,239 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'Zoom RAG Insight Engine - Serverless Application Model Template'
+
+Globals:
+  Function:
+    Timeout: 60
+    MemorySize: 256
+    Runtime: python3.11
+    Environment:
+      Variables:
+        TRANSCRIPT_BUCKET: !Ref TranscriptBucket
+        BEDROCK_KB_ID: !Ref BedrockKBId
+        OPENSEARCH_ENDPOINT: !Ref OpenSearchEndpoint
+        ZOOM_SECRETS_ARN: !Ref ZoomSecretsArn
+
+Parameters:
+  BedrockKBId:
+    Type: String
+    Description: Bedrock Knowledge Base ID
+    
+  OpenSearchEndpoint:
+    Type: String
+    Description: OpenSearch Serverless Collection Endpoint
+    
+  ZoomSecretsArn:
+    Type: String
+    Description: ARN of Zoom API credentials in Secrets Manager
+
+Resources:
+  # S3 Buckets
+  TranscriptBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'zoom-transcripts-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'zoom-rag-frontend-${AWS::AccountId}'
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyText:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub '${FrontendBucket.Arn}/*'
+
+  # IAM Roles
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                Resource: !Sub '${TranscriptBucket.Arn}/*'
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'bedrock:*'
+                Resource: '*'
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'secretsmanager:GetSecretValue'
+                Resource: !Ref ZoomSecretsArn
+
+  # Lambda Functions
+  DataIngestionLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: zoom-data-ingestion
+      CodeUri: src/lambdas/data_ingestion/
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        ZoomWebhook:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ZoomRAGApi
+            Path: /ingest
+            Method: POST
+
+  DataProcessingLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: zoom-data-processing
+      CodeUri: src/lambdas/data_processing/
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        S3EventRule:
+          Type: S3
+          Properties:
+            Bucket: !Ref TranscriptBucket
+            Events: 's3:ObjectCreated:*'
+            Filter:
+              Key:
+                Rules:
+                  - Name: prefix
+                    Value: transcripts/raw/
+                  - Name: suffix
+                    Value: .vtt
+
+  QueryLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: zoom-query-handler
+      CodeUri: src/lambdas/query_handler/
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        QueryEndpoint:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ZoomRAGApi
+            Path: /query
+            Method: POST
+
+  # API Gateway
+  ZoomRAGApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: zoom-rag-api
+      StageName: prod
+      Auth:
+        DefaultAuthorizer: CognitoAuth
+        Authorizers:
+          CognitoAuth:
+            UserPoolArn: !Sub 'arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*'
+      Cors:
+        AllowMethods: "'GET, POST, OPTIONS'"
+        AllowHeaders: "'Content-Type, Authorization'"
+        AllowOrigin: "'*'"
+
+  # CloudFront Distribution for Frontend
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          Compress: true
+        ErrorResponses:
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+
+  # OpenSearch Serverless Collection (Create manually or via CDK)
+  # This is referenced but not created in CloudFormation for security reasons
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint for backend Lambda
+    Value: !Sub 'https://${ZoomRAGApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiEndpoint'
+
+  TranscriptBucketName:
+    Description: S3 bucket for storing transcripts
+    Value: !Ref TranscriptBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-TranscriptBucket'
+
+  FrontendBucketUrl:
+    Description: Frontend S3 bucket URL
+    Value: !GetAtt FrontendBucket.WebsiteURL
+    Export:
+      Name: !Sub '${AWS::StackName}-FrontendUrl'
+
+  CloudFrontUrl:
+    Description: CloudFront distribution URL
+    Value: !GetAtt CloudFrontDistribution.DomainName
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudFrontUrl'
+
+  DataIngestionFunctionArn:
+    Description: Data Ingestion Lambda ARN
+    Value: !GetAtt DataIngestionLambda.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-DataIngestionArn'
+
+  QueryFunctionArn:
+    Description: Query Lambda ARN
+    Value: !GetAtt QueryLambda.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-QueryArn'
