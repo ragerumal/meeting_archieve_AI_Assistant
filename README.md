@@ -837,6 +837,15 @@ Built with modern AWS serverless technologies:
 - GitHub: [@ragerumal](https://github.com/ragerumal)
 - LinkedIn: [Raj Ragel](https://www.linkedin.com/in/rajragel/)
 
+**Nitesh Kashyap**
+- LinkedIn: [Nitesh Kashyap](https://www.linkedin.com/in/nitesh-kashyap-13741814)
+
+**Kislaya Srivastava**
+- LinkedIn: [Kislaya Srivastava](https://www.linkedin.com/in/kislaya-srivastava)
+
+**Raghunath Erumal**
+- LinkedIn: [Raghunath Erumal](https://www.linkedin.com/in/raghunath-erumal)
+
 For questions or contributions, please reach out through GitHub or LinkedIn.
 
 ---
