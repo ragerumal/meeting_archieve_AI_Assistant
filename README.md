@@ -578,6 +578,8 @@ Authentication wrapper and main application layout.
 
 ### Data Ingestion Lambda
 
+Source: [src/lambdas/data_ingestion/index.py](src/lambdas/data_ingestion/index.py)
+
 **Trigger:** API Gateway POST `/ingest`
 
 **Purpose:** 
@@ -597,6 +599,8 @@ Authentication wrapper and main application layout.
 
 ### Data Processing Lambda
 
+Source: [src/lambdas/data_processing/index.py](src/lambdas/data_processing/index.py)
+
 **Trigger:** S3 ObjectCreated event on transcript upload
 
 **Purpose:**
@@ -610,6 +614,8 @@ Authentication wrapper and main application layout.
 - Memory: 1024 MB
 
 ### Query Handler Lambda
+
+Source: [src/lambdas/query_handler/index.py](src/lambdas/query_handler/index.py)
 
 **Trigger:** API Gateway POST `/query`
 
