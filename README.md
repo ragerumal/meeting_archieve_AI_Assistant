@@ -833,10 +833,6 @@ Built with modern AWS serverless technologies:
 
 ### Core Team
 
-**Raj Ragel**
-- GitHub: [@ragerumal](https://github.com/ragerumal)
-- LinkedIn: [Raj Ragel](https://www.linkedin.com/in/rajragel/)
-
 **Nitesh Kashyap**
 - LinkedIn: [Nitesh Kashyap](https://www.linkedin.com/in/nitesh-kashyap-13741814)
 
