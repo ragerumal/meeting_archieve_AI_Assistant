@@ -3,6 +3,7 @@
 A production-grade serverless RAG (Retrieval-Augmented Generation) application that automatically ingests Zoom meeting transcripts, indexes them into a vector database, and enables intelligent querying through a secure web interface powered by Amazon Bedrock's Claude 3 Haiku model.
 
 ---
+<img width="899" height="341" alt="image" src="https://github.com/user-attachments/assets/0196af83-ded0-4788-aa2f-54d498157775" />
 
 ## 📋 Table of Contents
 
